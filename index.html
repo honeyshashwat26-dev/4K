@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>Telecast</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<style>
+  :root{
+    --bg-0:#08090c; --bg-1:#101319;
+    --panel:rgba(24,27,34,0.72); --panel-border:rgba(255,255,255,0.08);
+    --panel-border-strong:rgba(255,255,255,0.14);
+    --text-0:#eef0f4; --text-1:#9aa1ae; --text-2:#5d6472;
+    --accent:#3ddc97; --accent-dim:rgba(61,220,151,0.16);
+    --danger:#ef4a5f; --danger-dim:rgba(239,74,95,0.16);
+    --warn:#f2b84b; --radius:16px; --radius-sm:12px;
+    --safe-t:env(safe-area-inset-top,0px); --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;min-height:100%;background:var(--bg-0);color:var(--text-0);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  button{font-family:inherit;}
+  button:focus-visible, input:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  a{color:inherit;}
+
+  header{
+    position:sticky; top:0; z-index:10;
+    padding:calc(14px + var(--safe-t)) 18px 14px;
+    background:rgba(8,9,12,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--panel-border);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+  }
+  header h1{font-size:17px; margin:0; font-weight:800; letter-spacing:-0.01em; display:flex; align-items:center; gap:8px;}
+  header h1 svg{width:19px;height:19px;color:var(--accent);}
+  .go-live-btn{
+    background:var(--accent); color:#062017; border:none; padding:9px 16px;
+    border-radius:999px; font-weight:700; font-size:13.5px; cursor:pointer;
+    display:flex; align-items:center; gap:6px;
+  }
+  .go-live-btn:active{filter:brightness(0.94);}
+  .go-live-btn svg{width:14px;height:14px;}
+
+  main{max-width:1100px; margin:0 auto; padding:20px 18px calc(40px + var(--safe-b));}
+
+  /* ---------- Discovery grid ---------- */
+  #view-grid.hidden, #view-watch.hidden, #view-broadcast.hidden{display:none;}
+  .section-title{font-size:13px; font-weight:700; color:var(--text-1); text-transform:uppercase; letter-spacing:0.06em; margin:6px 0 14px;}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px;}
+  .cam-card{
+    background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius);
+    padding:16px; cursor:pointer; transition:transform .15s, border-color .15s; text-align:left;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .cam-card:hover{transform:translateY(-3px); border-color:var(--panel-border-strong);}
+  .cam-card .row{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+  .cam-card h3{font-size:15.5px; margin:0; font-weight:700;}
+  .badge{font-size:11px; padding:3px 9px; border-radius:999px; font-weight:700; background:var(--danger); white-space:nowrap; display:flex; align-items:center; gap:5px;}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:#fff;animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%{opacity:1;}50%{opacity:.4;}100%{opacity:1;}}
+  .cam-card .meta{font-size:12.5px; color:var(--text-1); display:flex; flex-direction:column; gap:3px;}
+  .cam-kind{font-size:10.5px; color:var(--text-2); text-transform:uppercase; letter-spacing:0.04em;}
+  .empty-state{color:var(--text-1); text-align:center; padding:60px 20px; font-size:14px;}
+  .empty-state svg{width:40px;height:40px;color:var(--text-2); margin-bottom:12px;}
+
+  /* ---------- Watch view ---------- */
+  .btn-back{
+    background:var(--panel); color:var(--text-0); border:1px solid var(--panel-border-strong);
+    padding:9px 15px; border-radius:10px; cursor:pointer; font-weight:600; font-size:13.5px;
+    display:flex; align-items:center; gap:6px; margin-bottom:16px;
+  }
+  .video-wrapper{position:relative; background:#000; border-radius:var(--radius); overflow:hidden; aspect-ratio:16/9;}
+  video{width:100%; height:100%; object-fit:contain; background:#000;}
+  .btn-fullscreen{
+    position:absolute; bottom:12px; right:12px; background:rgba(0,0,0,0.6); color:#fff;
+    border:1px solid var(--panel-border-strong); padding:7px 13px; border-radius:8px; cursor:pointer; font-size:12.5px;
+  }
+  .watch-meta{display:flex; justify-content:space-between; align-items:center; margin-top:14px;}
+  .watch-meta h2{font-size:17px; margin:0 0 2px;}
+  .watch-status{font-size:13px; color:var(--text-1);}
+
+  /* ---------- Broadcast setup ---------- */
+  .setup-card{max-width:420px; margin:40px auto; text-align:center;}
+  .brand-mark{width:52px;height:52px;border-radius:14px;margin:0 auto 16px;background:linear-gradient(135deg,var(--accent),#1f9e6f);
+    display:flex;align-items:center;justify-content:center;}
+  .brand-mark svg{width:24px;height:24px;color:#062017;}
+  .setup-card h2{font-size:19px;margin:0 0 6px;font-weight:700;}
+  .setup-card p{color:var(--text-1); font-size:13.5px; line-height:1.5; margin:0 0 20px;}
+  .field{text-align:left; margin-bottom:14px;}
+  .field label{font-size:12px; font-weight:700; color:var(--text-1); text-transform:uppercase; letter-spacing:0.05em; display:block; margin-bottom:6px;}
+  .field input{
+    width:100%; background:var(--bg-1); border:1px solid var(--panel-border-strong); color:var(--text-0);
+    padding:11px 13px; border-radius:10px; font-size:14.5px;
+  }
+  .primary-btn{
+    background:var(--accent); color:#062017; border:none; padding:13px 22px; border-radius:12px;
+    font-size:15px; font-weight:700; cursor:pointer; width:100%; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .primary-btn:disabled{opacity:0.5;}
+  .setup-error{margin-top:14px; font-size:13px; color:var(--danger); background:var(--danger-dim);
+    border:1px solid rgba(239,74,95,0.3); border-radius:10px; padding:10px 12px; display:none; text-align:left;}
+  .setup-error.show{display:block;}
+  .spinner{width:16px;height:16px;border-radius:50%;border:2px solid rgba(6,32,23,0.35);border-top-color:#062017;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* ---------- Broadcast live console ---------- */
+  #broadcastLive.hidden{display:none;}
+  video#localVideo{width:100%; aspect-ratio:16/9; object-fit:cover; background:#000; border-radius:var(--radius); transform:scaleX(-1);}
+  video#localVideo.env{transform:none;}
+  .live-topbar{display:flex; justify-content:space-between; align-items:center; margin:14px 0;}
+  .pill{display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--panel-border);
+    padding:7px 12px; border-radius:999px; font-size:12.5px; font-weight:700;}
+  .dot-live{width:7px;height:7px;border-radius:50%;background:var(--danger); animation:pulse 1.6s infinite;}
+  .link-card{background:var(--panel); border:1px solid var(--panel-border-strong); border-radius:var(--radius-sm);
+    padding:12px 14px; display:flex; align-items:center; gap:10px; margin-bottom:14px;}
+  .link-card .label{font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-1); font-weight:700;}
+  .link-card .url{font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px;}
+  .copy-btn{flex-shrink:0; background:var(--accent-dim); color:var(--accent); border:1px solid rgba(61,220,151,0.35);
+    border-radius:9px; padding:8px 13px; font-size:12.5px; font-weight:700; cursor:pointer;}
+  .copy-btn.copied{background:var(--accent); color:#062017;}
+  .controls-row{display:flex; align-items:center; justify-content:center; gap:12px; margin:18px 0;}
+  .ctrl-btn{width:50px;height:50px;border-radius:50%;background:var(--panel); border:1px solid var(--panel-border-strong);
+    color:var(--text-0); display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .ctrl-btn svg{width:20px;height:20px;}
+  .ctrl-btn.off{background:var(--danger-dim); border-color:rgba(239,74,95,0.45); color:var(--danger);}
+  .ctrl-btn.disabled{opacity:0.35; pointer-events:none;}
+  .ctrl-btn.end{width:60px;height:60px; background:var(--danger); border-color:var(--danger); color:#fff;}
+  .viewer-pill{text-align:center; font-size:12.5px; color:var(--text-1); margin-bottom:6px;}
+  .viewer-pill b{color:var(--text-0);}
+  /* on-screen "someone is watching" pulse — the hook point for a future physical LED */
+  #viewFlash{
+    position:fixed; inset:0; pointer-events:none; background:var(--accent);
+    opacity:0; transition:opacity .15s; z-index:40;
+  }
+  #viewFlash.flash{opacity:0.12; transition:opacity .15s;}
+
+  /* ---------- Summary ---------- */
+  .summary-card{max-width:400px; margin:40px auto; text-align:center;}
+  .summary-card .check{width:56px;height:56px;border-radius:50%;margin:0 auto 16px;background:var(--accent-dim);
+    border:1px solid rgba(61,220,151,0.4); display:flex;align-items:center;justify-content:center;}
+  .summary-card .check svg{width:26px;height:26px;color:var(--accent);}
+  .summary-stats{display:flex; gap:10px; margin:18px 0;}
+  .summary-stats .stat{flex:1; background:var(--panel); border:1px solid var(--panel-border); border-radius:var(--radius-sm); padding:12px 6px;}
+  .summary-stats .stat .n{font-size:16px; font-weight:800;}
+  .summary-stats .stat .l{font-size:10px; color:var(--text-1); text-transform:uppercase; letter-spacing:0.05em; margin-top:2px;}
+  .secondary-btn{background:transparent; color:var(--text-0); border:1px solid var(--panel-border-strong);
+    padding:12px 22px; border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; width:100%; margin-top:10px;}
+
+  .toast{position:fixed; left:50%; bottom:calc(24px + var(--safe-b)); transform:translate(-50%, 12px);
+    background:#1a1d24; color:var(--text-0); border:1px solid var(--panel-border-strong); padding:11px 18px;
+    border-radius:12px; font-size:13.5px; font-weight:600; opacity:0; pointer-events:none;
+    transition:opacity .25s, transform .25s; z-index:50; text-align:center; max-width:86%;}
+  .toast.show{opacity:1; transform:translate(-50%, 0);}
+</style>
+</head>
+<body>
+
+<div id="viewFlash"></div>
+
+<header>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 10l5-3v10l-5-3M4 7h9a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V9a2 2 0 012-2z"/></svg>Telecast</h1>
+  <button class="go-live-btn" id="navGoLive">
+    <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+    Go Live
+  </button>
+</header>
+
+<main>
+
+  <!-- ================= DISCOVERY GRID ================= -->
+  <div id="view-grid">
+    <div class="section-title">Live Now</div>
+    <div id="room-grid" class="grid"></div>
+    <div id="empty-state" class="empty-state" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+      <div>No cameras are live right now.</div>
+    </div>
+  </div>
+
+  <!-- ================= WATCH VIEW ================= -->
+  <div id="view-watch" class="hidden">
+    <button class="btn-back" id="backToGrid">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 18l-6-6 6-6"/></svg>
+      Back to live list
+    </button>
+    <div class="video-wrapper">
+      <video id="remoteVideo" autoplay playsinline controls></video>
+      <button class="btn-fullscreen" id="watchFullscreenBtn">Fullscreen</button>
+    </div>
+    <div class="watch-meta">
+      <div>
+        <h2 id="watchRoomName">Camera</h2>
+        <div class="watch-status" id="watchStatus">Connecting…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= BROADCAST: SETUP ================= -->
+  <div id="view-broadcast" class="hidden">
+
+    <div id="broadcastSetup">
+      <div class="setup-card">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 10l5-3v10l-5-3M4 7h9a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V9a2 2 0 012-2z"/></svg>
+        </div>
+        <h2>Start a broadcast</h2>
+        <p>Name your camera and allow access — anyone on this site will be able to find and watch it live.</p>
+        <div class="field">
+          <label for="roomNameInput">Camera name</label>
+          <input type="text" id="roomNameInput" placeholder="e.g. Front Door" maxlength="40" />
+        </div>
+        <button class="primary-btn" id="startBtn"><span id="startBtnLabel">Enable camera &amp; go live</span></button>
+        <div class="setup-error" id="setupError"></div>
+      </div>
+    </div>
+
+    <!-- ================= BROADCAST: LIVE CONSOLE ================= -->
+    <div id="broadcastLive" class="hidden">
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div class="live-topbar">
+        <div class="pill"><span class="dot-live"></span><span id="timerLabel">00:00:00</span></div>
+        <button class="ctrl-btn" id="endBtn" style="width:38px;height:38px;" aria-label="End telecast">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
+      <div class="link-card">
+        <div style="flex:1;min-width:0;">
+          <div class="label">Direct link</div>
+          <div class="url" id="linkUrl">—</div>
+        </div>
+        <button class="copy-btn" id="copyLinkBtn">Copy</button>
+      </div>
+      <div class="viewer-pill"><b id="viewerCount">0</b> watching</div>
+      <div class="controls-row">
+        <button class="ctrl-btn" id="micBtn" aria-label="Toggle microphone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+        </button>
+        <button class="ctrl-btn" id="camToggleBtn" aria-label="Toggle video">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        </button>
+        <button class="ctrl-btn end" id="endBtnBig" aria-label="End telecast">
+          <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+        <button class="ctrl-btn" id="switchCamBtn" aria-label="Switch camera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0114.85-3.36L23 10M1 14l4.65 4.36A9 9 0 0020.5 15"/></svg>
+        </button>
+        <button class="ctrl-btn disabled" id="torchBtn" aria-label="Toggle flashlight">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 4H6l3 7h-3l7 9-1-7h4z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ================= BROADCAST: SUMMARY ================= -->
+    <div id="broadcastSummary" class="hidden">
+      <div class="summary-card">
+        <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <h2>Broadcast ended</h2>
+        <div class="summary-stats">
+          <div class="stat"><div class="n" id="statDuration">00:00:00</div><div class="l">Duration</div></div>
+          <div class="stat"><div class="n" id="statSize">0 MB</div><div class="l">File size</div></div>
+          <div class="stat"><div class="n" id="statViewers">0</div><div class="l">Peak viewers</div></div>
+        </div>
+        <a class="primary-btn" id="downloadBtn" download="telecast.webm" style="text-decoration:none;">Download recording</a>
+        <button class="secondary-btn" id="newBroadcastBtn">Start a new broadcast</button>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* =====================================================================
+     DISCOVERY PROTOCOL — documented so a future ESP32 bridge can join
+     without any changes to this page.
+
+     Topic:  telecast/discovery/active_hosts
+     Publish a JSON heartbeat every ~4s while live:
+       {
+         peerId:    <the PeerJS id this broadcaster is reachable at>,
+         roomName:  <display name, e.g. "Front Door">,
+         kind:      "browser" | "esp32-bridge",   // who's broadcasting
+         status:    "LIVE" | "PAUSED",
+         viewers:   <current viewer count>,
+         startTime: <ms epoch when broadcast started>,
+         ts:        <ms epoch of this heartbeat>
+       }
+     On stopping, publish: { peerId, status: "ENDED" }
+
+     A future ESP32 setup would run a small bridge script (Node.js, on any
+     computer on the same network as the ESP32) that: reads the ESP32's
+     video/audio feed, opens a PeerJS Peer the same way this page does,
+     answers calls with that feed, and publishes heartbeats with
+     kind:"esp32-bridge". It will appear in the grid below exactly like
+     a browser broadcaster — no changes needed here.
+  ===================================================================== */
+  const MQTT_URL = "wss://broker.emqx.io:8084/mqtt";
+  const DISCOVERY_TOPIC = "telecast/discovery/active_hosts";
+  const STALE_MS = 10000;
+  const HEARTBEAT_MS = 4000;
+
+  const ICE_CONFIG = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+    ]
+  };
+  const RECORD_MIME_CANDIDATES = [
+    'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'
+  ];
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ---------------- shared ---------------- */
+  let mqttClient = null;
+  const activeBroadcasts = new Map();
+  const toast = $('toast');
+  function showToast(msg, ms){
+    toast.textContent = msg; toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(()=>toast.classList.remove('show'), ms || 2400);
+  }
+  function fmtDuration(ms){
+    const total = Math.max(0, Math.floor(ms/1000));
+    const h = String(Math.floor(total/3600)).padStart(2,'0');
+    const m = String(Math.floor((total%3600)/60)).padStart(2,'0');
+    const s = String(total%60).padStart(2,'0');
+    return `${h}:${m}:${s}`;
+  }
+  function genId(){
+    const bytes = new Uint8Array(6);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    const s = Array.from(bytes, b => b.toString(36)).join('').replace(/[^a-z0-9]/g,'').slice(0,9);
+    return 'telecast-' + (s || Math.random().toString(36).slice(2,11));
+  }
+
+  function initMQTT(){
+    mqttClient = mqtt.connect(MQTT_URL);
+    mqttClient.on('connect', () => mqttClient.subscribe(DISCOVERY_TOPIC));
+    mqttClient.on('message', (topic, message) => {
+      try{
+        const data = JSON.parse(message.toString());
+        if (data.status === 'ENDED') {
+          activeBroadcasts.delete(data.peerId);
+          if (currentWatchPeerId === data.peerId) {
+            watchStatus.textContent = 'Broadcast ended';
+          }
+        } else {
+          activeBroadcasts.set(data.peerId, data);
+        }
+        renderGrid();
+      }catch(e){ /* ignore malformed */ }
+    });
+  }
+  setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+    activeBroadcasts.forEach((info, peerId) => {
+      if (now - info.ts > STALE_MS) { activeBroadcasts.delete(peerId); changed = true; }
+    });
+    if (changed) renderGrid();
+  }, 3000);
+
+  function escapeHtml(str){
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  /* =====================================================================
+     VIEW ROUTER
+  ===================================================================== */
+  const viewGrid = $('view-grid');
+  const viewWatch = $('view-watch');
+  const viewBroadcast = $('view-broadcast');
+
+  function showView(name){
+    viewGrid.classList.toggle('hidden', name !== 'grid');
+    viewWatch.classList.toggle('hidden', name !== 'watch');
+    viewBroadcast.classList.toggle('hidden', name !== 'broadcast');
+  }
+
+  $('navGoLive').addEventListener('click', () => {
+    if (currentWatchPeer) leaveWatch();
+    showView('broadcast');
+  });
+  $('backToGrid').addEventListener('click', () => { leaveWatch(); showView('grid'); });
+
+  /* =====================================================================
+     DISCOVERY GRID + WATCH (viewer side)
+  ===================================================================== */
+  const roomGrid = $('room-grid');
+  const emptyState = $('empty-state');
+  const remoteVideo = $('remoteVideo');
+  const watchRoomName = $('watchRoomName');
+  const watchStatus = $('watchStatus');
+
+  let watchPeer = null;
+  let currentWatchPeer = null; // MediaConnection
+  let currentWatchPeerId = null;
+
+  function renderGrid(){
+    roomGrid.innerHTML = '';
+    if (activeBroadcasts.size === 0){
+      emptyState.style.display = 'block';
+      return;
+    }
+    emptyState.style.display = 'none';
+    activeBroadcasts.forEach((info, peerId) => {
+      const card = document.createElement('div');
+      card.className = 'cam-card';
+      const isPaused = info.status === 'PAUSED';
+      card.innerHTML = `
+        <div class="row">
+          <h3>${escapeHtml(info.roomName || 'Camera')}</h3>
+          <span class="badge" style="${isPaused ? 'background:var(--warn);color:#3a2c05;' : ''}">
+            ${isPaused ? '' : '<span class="dot"></span>'}${isPaused ? 'PAUSED' : 'LIVE'}
+          </span>
+        </div>
+        <div class="meta">
+          <span>${info.viewers || 0} watching</span>
+          <span class="cam-kind">${info.kind === 'esp32-bridge' ? 'ESP32 camera' : 'Phone camera'}</span>
+        </div>`;
+      card.onclick = () => watchBroadcast(peerId, info.roomName || 'Camera');
+      roomGrid.appendChild(card);
+    });
+  }
+
+  function watchBroadcast(peerId, roomName){
+    showView('watch');
+    watchRoomName.textContent = roomName;
+    watchStatus.textContent = 'Connecting…';
+    currentWatchPeerId = peerId;
+
+    if (!watchPeer || watchPeer.destroyed){
+      watchPeer = new Peer(undefined, { config: ICE_CONFIG });
+    }
+
+    const attemptCall = () => {
+      const dummyStream = document.createElement('canvas').captureStream();
+      const call = watchPeer.call(peerId, dummyStream);
+      currentWatchPeer = call;
+      call.on('stream', (remoteStream) => {
+        remoteVideo.srcObject = remoteStream;
+        watchStatus.textContent = 'Connected • Live';
+      });
+      call.on('close', () => { watchStatus.textContent = 'Broadcast ended'; });
+      call.on('error', (err) => { watchStatus.textContent = 'Playback error: ' + err.message; });
+    };
+
+    if (watchPeer.open) attemptCall(); else watchPeer.once('open', attemptCall);
+  }
+
+  function leaveWatch(){
+    if (currentWatchPeer){ try{ currentWatchPeer.close(); }catch(e){} currentWatchPeer = null; }
+    remoteVideo.srcObject = null;
+    currentWatchPeerId = null;
+  }
+
+  $('watchFullscreenBtn').addEventListener('click', () => {
+    if (!document.fullscreenElement) remoteVideo.requestFullscreen().catch(()=>{});
+    else document.exitFullscreen();
+  });
+
+  /* =====================================================================
+     BROADCAST (host side)
+  ===================================================================== */
+  let peer = null;
+  let localStream = null;
+  let currentFacing = 'environment';
+  let torchOn = false, micOn = true, camOn = true;
+  let activeCalls = new Map();
+  let dataConns = new Map();
+  let peakViewers = 0;
+  let broadcastStartTs = null;
+  let timerInterval = null;
+  let heartbeatInterval = null;
+  let mediaRecorder = null, recordedChunks = [], recordingMime = 'video/webm', recordedBlobUrl = null;
+  let roomId = null, roomName = 'Camera';
+
+  const localVideo = $('localVideo');
+  const broadcastSetup = $('broadcastSetup');
+  const broadcastLive = $('broadcastLive');
+  const broadcastSummary = $('broadcastSummary');
+  const roomNameInput = $('roomNameInput');
+  const startBtn = $('startBtn');
+  const startBtnLabel = $('startBtnLabel');
+  const setupError = $('setupError');
+  const timerLabel = $('timerLabel');
+  const linkUrl = $('linkUrl');
+  const copyLinkBtn = $('copyLinkBtn');
+  const viewerCountEl = $('viewerCount');
+  const micBtn = $('micBtn');
+  const camToggleBtn = $('camToggleBtn');
+  const switchCamBtn = $('switchCamBtn');
+  const torchBtn = $('torchBtn');
+  const viewFlash = $('viewFlash');
+
+  function buildDirectLink(id){
+    const url = new URL(window.location.href.split('?')[0]);
+    url.search = '?room=' + encodeURIComponent(id);
+    return url.toString();
+  }
+
+  startBtn.addEventListener('click', async () => {
+    setupError.classList.remove('show');
+    startBtn.disabled = true;
+    startBtnLabel.innerHTML = '<span class="spinner"></span>';
+    roomName = (roomNameInput.value || '').trim() || 'Camera';
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+      });
+      localStream = stream;
+      currentFacing = 'environment';
+      localVideo.srcObject = stream;
+      localVideo.classList.add('env');
+      localVideo.muted = true;
+      await localVideo.play().catch(()=>{});
+      checkTorchSupport();
+      goLive();
+    }catch(err){
+      startBtn.disabled = false;
+      startBtnLabel.textContent = 'Enable camera & go live';
+      let msg = 'Could not access camera or microphone.';
+      if (err && err.name === 'NotAllowedError') msg = 'Camera/microphone permission was denied. Enable access in your browser settings and try again.';
+      else if (err && err.name === 'NotFoundError') msg = 'No camera or microphone was found on this device.';
+      else if (err && err.name === 'NotReadableError') msg = 'Your camera is already in use by another app.';
+      setupError.textContent = msg;
+      setupError.classList.add('show');
+    }
+  });
+
+  function checkTorchSupport(){
+    try{
+      const track = localStream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      torchBtn.classList.toggle('disabled', !(caps && caps.torch));
+    }catch(e){ torchBtn.classList.add('disabled'); }
+  }
+
+  function goLive(){
+    broadcastSetup.classList.add('hidden');
+    broadcastLive.classList.remove('hidden');
+    roomId = genId();
+    linkUrl.textContent = buildDirectLink(roomId);
+    initPeer();
+    startRecording();
+    broadcastStartTs = Date.now();
+    timerInterval = setInterval(() => { timerLabel.textContent = fmtDuration(Date.now() - broadcastStartTs); }, 1000);
+    heartbeatInterval = setInterval(publishHeartbeat, HEARTBEAT_MS);
+    publishHeartbeat();
+  }
+
+  function publishHeartbeat(){
+    if (!mqttClient || !mqttClient.connected) return;
+    mqttClient.publish(DISCOVERY_TOPIC, JSON.stringify({
+      peerId: roomId,
+      roomName: roomName,
+      kind: 'browser',
+      status: camOn ? 'LIVE' : 'PAUSED',
+      viewers: activeCalls.size,
+      startTime: broadcastStartTs,
+      ts: Date.now()
+    }));
+  }
+
+  function initPeer(){
+    peer = new Peer(roomId, { config: ICE_CONFIG });
+    peer.on('open', () => showToast('Live — visible in the camera list'));
+    peer.on('error', (err) => {
+      if (err && err.type === 'unavailable-id'){
+        roomId = genId();
+        linkUrl.textContent = buildDirectLink(roomId);
+        peer.destroy();
+        setTimeout(initPeer, 400);
+      } else {
+        showToast('Connection issue: ' + (err && err.type ? err.type : 'unknown'));
+      }
+    });
+    peer.on('call', (call) => {
+      call.answer(localStream);
+      activeCalls.set(call.peer, call);
+      call.on('close', () => onViewerLeft(call.peer));
+      call.on('error', () => onViewerLeft(call.peer));
+      onViewerJoined();
+    });
+    peer.on('connection', (conn) => {
+      dataConns.set(conn.peer, conn);
+      conn.on('close', () => dataConns.delete(conn.peer));
+    });
+  }
+
+  // A viewer connecting is the trigger point for a "someone is watching" signal.
+  // Here it's a 3-second on-screen flash; once an ESP32 is in the loop, the
+  // bridge script listens for this same event and blinks the physical LED.
+  function onViewerJoined(){
+    updateViewerCount();
+    viewFlash.classList.add('flash');
+    setTimeout(() => viewFlash.classList.remove('flash'), 3000);
+  }
+  function onViewerLeft(peerId){
+    activeCalls.delete(peerId);
+    updateViewerCount();
+  }
+  function updateViewerCount(){
+    const n = activeCalls.size;
+    viewerCountEl.textContent = n;
+    if (n > peakViewers) peakViewers = n;
+  }
+
+  function startRecording(){
+    recordingMime = RECORD_MIME_CANDIDATES.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+    try{
+      mediaRecorder = recordingMime ? new MediaRecorder(localStream, { mimeType: recordingMime }) : new MediaRecorder(localStream);
+      recordedChunks = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+      mediaRecorder.start(1000);
+    }catch(err){ showToast('Local recording is not supported in this browser'); }
+  }
+
+  micBtn.addEventListener('click', () => {
+    if (!localStream) return;
+    micOn = !micOn;
+    localStream.getAudioTracks().forEach(t => t.enabled = micOn);
+    micBtn.classList.toggle('off', !micOn);
+  });
+  camToggleBtn.addEventListener('click', () => {
+    if (!localStream) return;
+    camOn = !camOn;
+    localStream.getVideoTracks().forEach(t => t.enabled = camOn);
+    camToggleBtn.classList.toggle('off', !camOn);
+    publishHeartbeat();
+  });
+  torchBtn.addEventListener('click', async () => {
+    if (torchBtn.classList.contains('disabled') || !localStream) return;
+    try{
+      const track = localStream.getVideoTracks()[0];
+      torchOn = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      torchBtn.classList.toggle('active', torchOn);
+    }catch(err){ showToast('Flashlight control is not supported on this camera'); torchOn = !torchOn; }
+  });
+  switchCamBtn.addEventListener('click', async () => {
+    if (!localStream) return;
+    switchCamBtn.disabled = true;
+    try{
+      const newFacing = currentFacing === 'environment' ? 'user' : 'environment';
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: newFacing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        audio: false
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      const oldVideoTrack = localStream.getVideoTracks()[0];
+      activeCalls.forEach((call) => {
+        const pc = call.peerConnection;
+        if (!pc) return;
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) sender.replaceTrack(newVideoTrack);
+      });
+      const audioTrack = localStream.getAudioTracks()[0];
+      const combined = new MediaStream([newVideoTrack, ...(audioTrack ? [audioTrack] : [])]);
+      oldVideoTrack.stop();
+      localStream = combined;
+      localVideo.srcObject = combined;
+      localVideo.classList.toggle('env', newFacing === 'environment');
+      currentFacing = newFacing;
+      newVideoTrack.enabled = camOn;
+      restartRecording(combined);
+      checkTorchSupport();
+      torchOn = false; torchBtn.classList.remove('active');
+      showToast(newFacing === 'environment' ? 'Rear camera' : 'Front camera');
+    }catch(err){ showToast('Could not switch camera'); }
+    finally{ switchCamBtn.disabled = false; }
+  });
+  function restartRecording(stream){
+    if (!mediaRecorder) return;
+    try{ if (mediaRecorder.state !== 'inactive') mediaRecorder.stop(); }catch(e){}
+    setTimeout(() => {
+      try{
+        mediaRecorder = recordingMime ? new MediaRecorder(stream, { mimeType: recordingMime }) : new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.start(1000);
+      }catch(e){}
+    }, 60);
+  }
+
+  copyLinkBtn.addEventListener('click', async () => {
+    const link = buildDirectLink(roomId);
+    try{ await navigator.clipboard.writeText(link); }
+    catch(e){
+      const ta = document.createElement('textarea');
+      ta.value = link; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand('copy'); }catch(_){}
+      document.body.removeChild(ta);
+    }
+    copyLinkBtn.textContent = 'Copied!'; copyLinkBtn.classList.add('copied');
+    setTimeout(() => { copyLinkBtn.textContent = 'Copy'; copyLinkBtn.classList.remove('copied'); }, 1800);
+  });
+
+  function endBroadcast(){
+    if (mqttClient && mqttClient.connected){
+      mqttClient.publish(DISCOVERY_TOPIC, JSON.stringify({ peerId: roomId, status: 'ENDED' }));
+    }
+    activeCalls.forEach(call => { try{ call.close(); }catch(e){} });
+    dataConns.forEach(conn => { try{ conn.close(); }catch(e){} });
+    activeCalls.clear(); dataConns.clear();
+    if (timerInterval) clearInterval(timerInterval);
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    const finalDurationMs = broadcastStartTs ? (Date.now() - broadcastStartTs) : 0;
+    finalizeRecording(finalDurationMs);
+    if (localStream) localStream.getTracks().forEach(t => t.stop());
+    if (peer) try{ peer.destroy(); }catch(e){}
+  }
+  $('endBtn').addEventListener('click', endBroadcast);
+  $('endBtnBig').addEventListener('click', endBroadcast);
+
+  function finalizeRecording(durationMs){
+    const finish = () => {
+      const blob = new Blob(recordedChunks, { type: recordingMime || 'video/webm' });
+      recordedBlobUrl = URL.createObjectURL(blob);
+      $('statDuration').textContent = fmtDuration(durationMs);
+      $('statSize').textContent = (blob.size / (1024*1024)).toFixed(2) + ' MB';
+      $('statViewers').textContent = peakViewers;
+      const ext = (recordingMime || '').includes('mp4') ? 'mp4' : 'webm';
+      $('downloadBtn').href = recordedBlobUrl;
+      $('downloadBtn').download = `telecast-${roomId || 'session'}.${ext}`;
+      broadcastLive.classList.add('hidden');
+      broadcastSummary.classList.remove('hidden');
+    };
+    if (mediaRecorder && mediaRecorder.state !== 'inactive'){
+      mediaRecorder.onstop = finish;
+      try{ mediaRecorder.stop(); }catch(e){ finish(); }
+    } else finish();
+  }
+
+  $('newBroadcastBtn').addEventListener('click', () => {
+    broadcastSummary.classList.add('hidden');
+    broadcastSetup.classList.remove('hidden');
+    roomNameInput.value = '';
+    startBtn.disabled = false;
+    startBtnLabel.textContent = 'Enable camera & go live';
+    peakViewers = 0; viewerCountEl.textContent = '0';
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (peer && !peer.destroyed && mqttClient && mqttClient.connected){
+      mqttClient.publish(DISCOVERY_TOPIC, JSON.stringify({ peerId: roomId, status: 'ENDED' }));
+    }
+  });
+
+  /* =====================================================================
+     BOOT
+  ===================================================================== */
+  initMQTT();
+  const initialParams = new URLSearchParams(window.location.search);
+  const directRoom = initialParams.get('room');
+  if (directRoom && /^[a-zA-Z0-9\-_]{3,64}$/.test(directRoom)){
+    watchBroadcast(directRoom, 'Camera');
+  } else {
+    showView('grid');
+  }
+})();
+</script>
+</body>
+</html>
